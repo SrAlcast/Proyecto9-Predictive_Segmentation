@@ -1,4 +1,3 @@
-# Proyecto9-Predictive_Segmentation
 # 📊 **Proyecto 9: Predictive Segmentation**
 
 ## 📖 **Descripción**
