@@ -24,41 +24,97 @@ from sklearn.metrics import (
 import xgboost as xgb
 from sklearn.metrics import roc_curve, auc
 
-def metricas(y_train, y_train_pred, y_test, y_test_pred, prob_train=None, prob_test=None):
-    """
-    Genera una tabla comparativa de métricas entre los conjuntos de entrenamiento y prueba.
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor, plot_tree
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split,GridSearchCV
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.model_selection import KFold,LeaveOneOut, cross_val_score
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
 
-    Parámetros:
-        y_train (array-like): Valores reales del conjunto de entrenamiento.
-        y_train_pred (array-like): Predicciones del modelo en el conjunto de entrenamiento.
-        y_test (array-like): Valores reales del conjunto de prueba.
-        y_test_pred (array-like): Predicciones del modelo en el conjunto de prueba.
-        prob_train (array-like, opcional): Probabilidades de predicción en el conjunto de entrenamiento.
-        prob_test (array-like, opcional): Probabilidades de predicción en el conjunto de prueba.
+def metricas(y_train, y_train_pred, y_test, y_test_pred):
+    # Convertir DataFrames a Series si es necesario
+    if isinstance(y_train, pd.DataFrame):
+        y_train = y_train.squeeze()
+    if isinstance(y_test, pd.DataFrame):
+        y_test = y_test.squeeze()
 
-    Retorna:
-        pd.DataFrame: DataFrame con las métricas comparadas para entrenamiento y prueba.
-    """
-    # Métricas para conjunto de entrenamiento
-    metricas_train = {
-        "accuracy": accuracy_score(y_train, y_train_pred),
-        "precision": precision_score(y_train, y_train_pred, average='weighted', zero_division=0),
-        "recall": recall_score(y_train, y_train_pred, average='weighted', zero_division=0),
-        "f1": f1_score(y_train, y_train_pred, average='weighted', zero_division=0),
-        "kappa": cohen_kappa_score(y_train, y_train_pred)
+    # Convertir a NumPy arrays
+    y_train = y_train.values if hasattr(y_train, 'values') else y_train
+    y_test = y_test.values if hasattr(y_test, 'values') else y_test
+
+    # Verificar que contienen valores numéricos
+    if not np.issubdtype(y_train.dtype, np.number) or not np.issubdtype(y_test.dtype, np.number):
+        raise ValueError("y_train o y_test contienen valores no numéricos.")
+
+    # Calcular métricas
+    train_metricas = {
+        'r2_score': round(r2_score(y_train, y_train_pred), 4),
+        'MAE': round(mean_absolute_error(y_train, y_train_pred), 4),
+        'MSE': round(mean_squared_error(y_train, y_train_pred), 4),
+        'RMSE': round(np.sqrt(mean_squared_error(y_train, y_train_pred)), 4),
+    }
+    
+    test_metricas = {
+        'r2_score': round(r2_score(y_test, y_test_pred), 4),
+        'MAE': round(mean_absolute_error(y_test, y_test_pred), 4),
+        'MSE': round(mean_squared_error(y_test, y_test_pred), 4),
+        'RMSE': round(np.sqrt(mean_squared_error(y_test, y_test_pred)), 4),
+    }
+    
+    # Calcular diferencias
+    diferencias = {
+        metric: round(train_metricas[metric] - test_metricas[metric], 4) for metric in train_metricas
+    }
+    
+    # Calcular porcentaje de diferencia relativa al valor mayor promedio
+    porcentaje = {
+        metric: round((diferencias[metric] / (train_metricas[metric] + test_metricas[metric]) / 2) * 100, 4)
+        for metric in train_metricas
+    }
+    
+    # Calcular el rango (entre y_train y y_test)
+    global_min = min(y_train.min(), y_test.min())
+    global_max = max(y_train.max(), y_test.max())
+    rango = round((global_max - global_min), 4)
+    
+    # Ratio sobre el rango
+    ratio_rango = {metric: (((train_metricas[metric] + test_metricas[metric]) / 2) * 100) / rango for metric in train_metricas}
+
+    # Calcular porcentaje de influencia basado en la referencia
+    porcentaje_rango = {
+        metric: round((abs(diferencias[metric]) / rango) * 100, 4)
+        for metric in diferencias
     }
 
-    # Métricas para conjunto de prueba
-    metricas_test = {
-        "accuracy": accuracy_score(y_test, y_test_pred),
-        "precision": precision_score(y_test, y_test_pred, average='weighted', zero_division=0),
-        "recall": recall_score(y_test, y_test_pred, average='weighted', zero_division=0),
-        "f1": f1_score(y_test, y_test_pred, average='weighted', zero_division=0),
-        "kappa": cohen_kappa_score(y_test, y_test_pred)
+       # Calcular el valor minimo de la media y mediana de la variable respuesta (entre y_train y y_test)
+    media_respuesta = round((np.mean(y_train) + np.mean(y_test)) / 2, 4)
+    
+    # Ratio sobre la media
+    ratio_media= {metric:(((train_metricas[metric]+test_metricas[metric])/2)*100)/media_respuesta for metric in train_metricas}
+
+    # Calcular porcentaje de influencia basado en la referencia
+    porcentaje_media = {
+        metric: round((abs(diferencias[metric]) / media_respuesta) * 100, 4)
+        for metric in diferencias
     }
 
-    # Combinar métricas en un DataFrame
-    return pd.DataFrame({"train": metricas_train, "test": metricas_test})
+    # Combinar resultados
+    metricas = {
+        'Train': train_metricas,
+        'Test': test_metricas,
+        'Diferencia Train-Test': diferencias,
+        'Porcentaje diferencia (%)': porcentaje,
+        'Rango valores': rango,
+        'Ratio Rango (%)': ratio_rango,
+        'Influencia dif rango (%)': porcentaje_rango,
+        'Media':media_respuesta,
+        'Ratio Media(%)':ratio_media,
+        'Influencia dif media (%)': porcentaje_media,    
+    }
+    return pd.DataFrame(metricas).T
+
 
 def combinar_metricas(model_names, *dfs):
     """
@@ -97,91 +153,3 @@ def combinar_metricas(model_names, *dfs):
 
     return df_combinado
 
-def comparador_curvas_auc(modelos, X_test, y_test, nombres_modelos):
-    """
-    Genera una visualización de las curvas AUC (ROC) para comparar cinco modelos.
-    
-    Parámetros:
-        modelos (list): Lista de los cinco modelos ajustados.
-        X_test (array-like): Conjunto de características de prueba.
-        y_test (array-like): Etiquetas reales de prueba.
-        nombres_modelos (list): Lista de nombres para cada modelo (en el mismo orden que `modelos`).
-    
-    Retorna:
-        None: Muestra un gráfico con las curvas ROC para los modelos.
-    """
-    if len(modelos) != 5 or len(nombres_modelos) != 5:
-        raise ValueError("Debe proporcionar exactamente cinco modelos y cinco nombres.")
-
-    plt.figure(figsize=(10, 8))
-
-    for i, modelo in enumerate(modelos):
-        if not hasattr(modelo, "predict_proba"):
-            raise ValueError(f"El modelo '{nombres_modelos[i]}' no tiene el método 'predict_proba'.")
-        
-        # Obtener las probabilidades predichas
-        probas_test = modelo.predict_proba(X_test)[:, 1]
-        
-        # Calcular la curva ROC
-        fpr, tpr, _ = roc_curve(y_test, probas_test)
-        roc_auc = auc(fpr, tpr)
-        
-        # Graficar la curva ROC
-        plt.plot(fpr, tpr, lw=2, label=f"{nombres_modelos[i]} (AUC = {roc_auc:.2f})")
-    
-    # Agregar líneas de referencia y etiquetas
-    plt.plot([0, 1], [0, 1], color="gray", linestyle="--", lw=2, label="Referencia")
-    plt.xlabel("Tasa de Falsos Positivos (FPR)")
-    plt.ylabel("Tasa de Verdaderos Positivos (TPR)")
-    plt.title("Comparación de Curvas ROC para 5 Modelos")
-    plt.legend(loc="lower right")
-    plt.grid(alpha=0.3)
-    plt.show()
-
-def comparar_matrices_confusion(X_train, y_train, X_test, y_test, modelos, nombres_modelos, figsize=(12, 8)):
-    """
-    Compara las matrices de confusión de varios modelos y muestra valores absolutos.
-
-    Parámetros:
-        X_train (array-like): Conjunto de características de entrenamiento.
-        y_train (array-like): Etiquetas reales de entrenamiento.
-        X_test (array-like): Conjunto de características de prueba.
-        y_test (array-like): Etiquetas reales de prueba.
-        modelos (list): Lista de modelos ajustados (deben implementar `fit` y `predict`).
-        nombres_modelos (list): Lista de nombres para identificar los modelos.
-        figsize (tuple): Tamaño del gráfico.
-
-    Retorna:
-        None: Muestra los gráficos de las matrices de confusión.
-    """
-    if len(modelos) != len(nombres_modelos):
-        raise ValueError("El número de modelos y nombres de modelos debe coincidir.")
-
-    # Configuración del gráfico
-    n_modelos = len(modelos)
-    cols = 3  # Número de columnas en el gráfico
-    rows = (n_modelos + cols - 1) // cols  # Número de filas necesarias
-
-    fig, axes = plt.subplots(rows, cols, figsize=figsize)
-    axes = axes.flatten()
-
-    for i, (modelo, nombre) in enumerate(zip(modelos, nombres_modelos)):
-        # Ajustar el modelo y generar predicciones
-        modelo.fit(X_train, y_train)
-        y_pred = modelo.predict(X_test)
-
-        # Calcular la matriz de confusión
-        cm = confusion_matrix(y_test, y_pred)
-
-        # Graficar la matriz de confusión con valores absolutos
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False, ax=axes[i])
-        axes[i].set_title(nombre)
-        axes[i].set_xlabel('Predicción')
-        axes[i].set_ylabel('Real')
-
-    # Eliminar ejes adicionales si hay más subplots que modelos
-    for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
-
-    plt.tight_layout()
-    plt.show()

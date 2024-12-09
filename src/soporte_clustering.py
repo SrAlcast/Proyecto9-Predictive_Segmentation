@@ -6,6 +6,7 @@ import pandas as pd
 # Otras utilidades
 # -----------------------------------------------------------------------
 import math
+from tqdm import tqdm
 
 # Para las visualizaciones
 # -----------------------------------------------------------------------
@@ -25,259 +26,20 @@ from sklearn.metrics import silhouette_score, davies_bouldin_score
 # Modelos de clustering
 # -----------------------------------------------------------------------
 from sklearn.cluster import KMeans
+from k_means_constrained import KMeansConstrained
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import SpectralClustering
+
 
 # Para visualizar los dendrogramas
 # -----------------------------------------------------------------------
 import scipy.cluster.hierarchy as sch
 
-class Exploracion:
-    """
-    Clase para realizar la exploración y visualización de datos en un DataFrame.
-
-    Atributos:
-    dataframe : pd.DataFrame
-        El conjunto de datos a ser explorado y visualizado.
-    """
-
-    def __init__(self, dataframe):
-        """
-        Inicializa la clase Exploracion con un DataFrame.
-
-        Params:
-            - dataframe : pd.DataFrame. El DataFrame que contiene los datos a ser explorados.
-        """
-        self.dataframe = dataframe
-    
-    def explorar_datos(self):
-        """
-        Realiza un análisis exploratorio de un DataFrame.
-
-        Params:
-            - Ninguno.
-
-        Returns:
-            - None.
-        """
-        print("5 registros aleatorios:")
-        display(self.dataframe.sample(5))
-        print("\n")
-
-        print("Información general del DataFrame:")
-        print(self.dataframe.info())
-        print("\n")
-
-        print("Duplicados en el DataFrame:")
-        print(self.dataframe.duplicated().sum())
-        print("\n")
-
-        print("Estadísticas descriptivas de las columnas numéricas:")
-        display(self.dataframe.describe().T)
-        print("\n")
-
-        print("Estadísticas descriptivas de las columnas categóricas:")
-        categorical_columns = self.dataframe.select_dtypes(include=['object']).columns
-        if len(categorical_columns) > 0:
-            display(self.dataframe[categorical_columns].describe().T)
-        else:
-            print("No hay columnas categóricas en el DataFrame.")
-        print("\n")
-        
-        print("Número de valores nulos por columna:")
-        print(self.dataframe.isnull().sum())
-        print("\n")
-        
-        if len(categorical_columns) > 0:
-            print("Distribución de valores categóricos:")
-            for col in categorical_columns:
-                print(f"\nColumna: {col}")
-                print(self.dataframe[col].value_counts())
-        
-        print("Matriz de correlación entre variables numéricas:")
-        display(self.dataframe.corr(numeric_only=True))
-        print("\n")
-
-    def visualizar_numericas(self):
-        """
-        Genera histogramas, boxplots y gráficos de dispersión para las variables numéricas del DataFrame.
-
-        Params:
-            - Ninguno.
-
-        Returns:
-            - None.
-        """
-        columns = self.dataframe.select_dtypes(include=np.number).columns
-
-        # Histogramas
-        fig, axes = plt.subplots(nrows=math.ceil(len(columns)/2), ncols=2, figsize=(21, 13))
-        axes = axes.flat
-        plt.suptitle("Distribución de las variables numéricas", fontsize=24)
-        for indice, columna in enumerate(columns):
-            sns.histplot(x=columna, data=self.dataframe, ax=axes[indice], kde=True, color="#F2C349")
-
-        if len(columns) % 2 != 0:
-            fig.delaxes(axes[-1])
-
-        plt.tight_layout()
-
-        # Boxplots
-        fig, axes = plt.subplots(nrows=math.ceil(len(columns)/2), ncols=2, figsize=(19, 11))
-        axes = axes.flat
-        plt.suptitle("Boxplots de las variables numéricas", fontsize=24)
-        for indice, columna in enumerate(columns):
-            sns.boxplot(x=columna, data=self.dataframe, ax=axes[indice], color="#F2C349", flierprops={'markersize': 4, 'markerfacecolor': 'cyan'})
-        if len(columns) % 2 != 0:
-            fig.delaxes(axes[-1])
-        plt.tight_layout()
-    
-    def visualizar_categoricas(self):
-        """
-        Genera gráficos de barras (count plots) para las variables categóricas del DataFrame.
-
-        Params:
-            - Ninguno.
-
-        Returns:
-            - None.
-        """
-        categorical_columns = self.dataframe.select_dtypes(include=['object', 'category']).columns
-
-        if len(categorical_columns) > 0:
-            try:
-                _, axes = plt.subplots(nrows=len(categorical_columns), ncols=1, figsize=(15, 5 * len(categorical_columns)))
-                axes = axes.flat
-                plt.suptitle("Distribución de las variables categóricas", fontsize=24)
-                for indice, columna in enumerate(categorical_columns):
-                    sns.countplot(data=self.dataframe, x=columna, ax=axes[indice])
-                    axes[indice].set_title(f'Distribución de {columna}', fontsize=20)
-                    axes[indice].set_xlabel(columna, fontsize=16)
-                    axes[indice].set_ylabel('Conteo', fontsize=16)
-                plt.tight_layout()
-            except: 
-                sns.countplot(data=self.dataframe, x=categorical_columns[0])
-                plt.title(f'Distribución de {categorical_columns[0]}', fontsize=20)
-                plt.xlabel(categorical_columns[0], fontsize=16)
-                plt.ylabel('Conteo', fontsize=16)
-        else:
-            print("No hay columnas categóricas en el DataFrame.")
-
-    def visualizar_categoricas_numericas(self):
-        """
-        Genera gráficos de dispersión para las variables numéricas vs todas las variables categóricas.
-
-        Params:
-            - Ninguno.
-
-        Returns:
-            - None.
-        """
-        categorical_columns = self.dataframe.select_dtypes(include=['object', 'category']).columns
-        numerical_columns = self.dataframe.select_dtypes(include=np.number).columns
-        if len(categorical_columns) > 0:
-            for num_col in numerical_columns:
-                try:
-                    _, axes = plt.subplots(nrows=len(categorical_columns), ncols=1, figsize=(10, 5 * len(categorical_columns)))
-                    axes = axes.flat
-                    plt.suptitle(f'Dispersión {num_col} vs variables categóricas', fontsize=24)
-                    for indice, cat_col in enumerate(categorical_columns):
-                        sns.scatterplot(x=num_col, y=self.dataframe.index, hue=cat_col, data=self.dataframe, ax=axes[indice])
-                        axes[indice].set_xlabel(num_col, fontsize=16)
-                        axes[indice].set_ylabel('Índice', fontsize=16)
-                        axes[indice].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2)
-                    plt.tight_layout()
-                except: 
-                    sns.scatterplot(x=num_col, y=self.dataframe.index, hue=categorical_columns[0], data=self.dataframe)
-                    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=10)
-                    plt.xlabel(num_col, fontsize=16)
-                    plt.ylabel('Índice', fontsize=16)
-        else:
-            print("No hay columnas categóricas en el DataFrame.")
-
-    def correlacion(self, metodo="pearson", tamanio=(14, 8)):
-        """
-        Genera un heatmap de la matriz de correlación de las variables numéricas del DataFrame.
-
-        Params:
-            - metodo : str, optional, default: "pearson". Método para calcular la correlación.
-            - tamanio : tuple of int, optional, default: (14, 8). Tamaño de la figura del heatmap.
-
-        Returns:
-            - None.
-        """
-        plt.figure(figsize=tamanio)
-        mask = np.triu(np.ones_like(self.dataframe.corr(numeric_only=True), dtype=np.bool_))
-        sns.heatmap(self.dataframe.corr(numeric_only=True, method=metodo), annot=True, cmap='viridis', vmax=1, vmin=-1, mask=mask)
-        plt.title("Correlación de las variables numéricas", fontsize=24)
-
-
-
-class Preprocesado:
-    """
-    Clase para realizar preprocesamiento de datos en un DataFrame.
-
-    Atributos:
-        - dataframe : pd.DataFrame. El conjunto de datos a ser preprocesado.
-    """
-    
-    def __init__(self, dataframe):
-        """
-        Inicializa la clase Preprocesado con un DataFrame.
-
-        Params:
-            - dataframe : pd.DataFrame. El DataFrame que contiene los datos a ser preprocesados.
-        """
-        self.dataframe = dataframe
-
-    def estandarizar(self):
-        """
-        Estandariza las columnas numéricas del DataFrame.
-
-        Este método ajusta y transforma las columnas numéricas del DataFrame utilizando `StandardScaler` para que
-        tengan media 0 y desviación estándar 1.
-
-        Returns:
-            - pd.DataFrame. El DataFrame con las columnas numéricas estandarizadas.
-        """
-        # Sacamos el nombre de las columnas numéricas
-        col_numericas = self.dataframe.select_dtypes(include=np.number).columns
-
-        # Inicializamos el escalador para estandarizar los datos
-        scaler = StandardScaler()
-
-        # Ajustamos los datos y los transformamos
-        X_scaled = scaler.fit_transform(self.dataframe[col_numericas])
-
-        # Sobreescribimos los valores de las columnas en el DataFrame
-        self.dataframe[col_numericas] = X_scaled
-
-        return self.dataframe
-    
-    def codificar(self):
-        """
-        Codifica las columnas categóricas del DataFrame.
-
-        Este método reemplaza los valores de las columnas categóricas por sus frecuencias relativas dentro de cada
-        columna.
-
-        Returns:
-            - pd.DataFrame. El DataFrame con las columnas categóricas codificadas.
-        """
-        # Sacamos el nombre de las columnas categóricas
-        col_categoricas = self.dataframe.select_dtypes(include=["category", "object"]).columns
-
-        # Iteramos por cada una de las columnas categóricas para aplicar el encoding
-        for categoria in col_categoricas:
-            # Calculamos las frecuencias de cada una de las categorías
-            frecuencia = self.dataframe[categoria].value_counts(normalize=True)
-
-            # Mapeamos los valores obtenidos en el paso anterior, sobreescribiendo la columna original
-            self.dataframe[categoria] = self.dataframe[categoria].map(frecuencia)
-
-        return self.dataframe
-
+from sklearn.metrics import (
+    silhouette_score, davies_bouldin_score, calinski_harabasz_score,
+    adjusted_rand_score, homogeneity_score, completeness_score, v_measure_score
+)
 
 class Clustering:
     """
@@ -295,22 +57,108 @@ class Clustering:
             - dataframe : pd.DataFrame. El DataFrame que contiene los datos a los que se les aplicarán los métodos de clustering.
         """
         self.dataframe = dataframe
-    
-    def sacar_clusters_kmeans(self, n_clusters=(2, 15)):
+
+    def elbow_method(self, cluster_range=range(1, 11)):
         """
-        Utiliza KMeans y KElbowVisualizer para determinar el número óptimo de clusters basado en la métrica de silhouette.
+        Aplica el método del codo para determinar el número óptimo de clusters.
 
         Params:
-            - n_clusters : tuple of int, optional, default: (2, 15). Rango de número de clusters a probar.
+            - cluster_range : range. Rango de números de clusters a evaluar.
+
+        Returns:
+            - inertia : list. Lista de inercia para cada número de clusters.
+        """
+        inertia = []
+        for k in tqdm(cluster_range):
+            kmeans = KMeans(n_clusters=k, random_state=42)
+            kmeans.fit(self.dataframe)
+            inertia.append(kmeans.inertia_)
         
+        # Gráfico del método del codo
+        plt.figure(figsize=(8, 5))
+        plt.plot(cluster_range, inertia, marker='o')
+        plt.title('Método del Codo')
+        plt.xlabel('Número de Clusters')
+        plt.ylabel('Inercia')
+        plt.show()
+        
+        return inertia
+
+    def silhouette_method(self, cluster_range=range(2, 11)):
+        """
+        Calcula el coeficiente de silueta para diferentes números de clusters.
+
+        Params:
+            - cluster_range : range. Rango de números de clusters a evaluar.
+
+        Returns:
+            - silhouette_scores : list. Lista de puntajes de silueta para cada número de clusters.
+        """
+        silhouette_scores = []
+        for k in tqdm(cluster_range):
+            kmeans = KMeans(n_clusters=k, random_state=42)
+            kmeans.fit(self.dataframe)
+            score = silhouette_score(self.dataframe, kmeans.labels_)
+            silhouette_scores.append(score)
+        
+        # Gráfico del coeficiente de silueta
+        plt.figure(figsize=(8, 5))
+        plt.plot(cluster_range, silhouette_scores, marker='o')
+        plt.title('Coeficiente de Silueta')
+        plt.xlabel('Número de Clusters')
+        plt.ylabel('Silhouette Score')
+        plt.show()
+        
+        return silhouette_scores
+
+    def davies_bouldin_method(self, cluster_range=range(2, 11)):
+        """
+        Calcula el índice de Davies-Bouldin para diferentes números de clusters.
+
+        Params:
+            - cluster_range : range. Rango de números de clusters a evaluar.
+
+        Returns:
+            - db_scores : list. Lista de puntajes de Davies-Bouldin para cada número de clusters.
+        """
+        db_scores = []
+        for k in tqdm(cluster_range):
+            kmeans = KMeans(n_clusters=k, random_state=42)
+            kmeans.fit(self.dataframe)
+            score = davies_bouldin_score(self.dataframe, kmeans.labels_)
+            db_scores.append(score)
+        
+        # Gráfico del índice de Davies-Bouldin
+        plt.figure(figsize=(8, 5))
+        plt.plot(cluster_range, db_scores, marker='o')
+        plt.title('Índice de Davies-Bouldin')
+        plt.xlabel('Número de Clusters')
+        plt.ylabel('Davies-Bouldin Score')
+        plt.show()
+        
+        return db_scores
+    
+    def visualizar_dendrograma(self, metodo="average"):
+        """
+        Genera y visualiza dendrogramas para el conjunto de datos utilizando diferentes métodos de distancias.
+
+        Params:
+            - metodo : str, optional, default: ["average", "complete", "ward"]. Lista de métodos para calcular las distancias entre los clusters. Cada método generará un dendrograma
+                en un subplot diferente.
+
         Returns:
             None
         """
-        model = KMeans(random_state=42)
-        visualizer = KElbowVisualizer(model, k=n_clusters, metric='silhouette')
-        visualizer.fit(self.dataframe)
-        visualizer.show()
-    
+        sch.dendrogram(
+            sch.linkage(self.dataframe, method=metodo),
+            labels=self.dataframe.index, 
+            leaf_rotation=90, leaf_font_size=4
+        )
+        plt.title(f'Dendrograma usando {metodo}')
+        plt.xlabel('Muestras')
+        plt.ylabel('Distancias')
+        plt.show()    
+
     def modelo_kmeans(self, dataframe_original, num_clusters):
         """
         Aplica KMeans al DataFrame y añade las etiquetas de clusters al DataFrame original.
@@ -326,30 +174,35 @@ class Clustering:
         km_fit = kmeans.fit(self.dataframe)
         labels = km_fit.labels_
         dataframe_original["clusters_kmeans"] = labels.astype(str)
-        return dataframe_original
+        return dataframe_original,labels
     
-    def visualizar_dendrogramas(self, lista_metodos=["average", "complete", "ward"]):
+    def modelo_balanced_kmeans_min(self, dataframe_original, num_clusters, size_min):
         """
-        Genera y visualiza dendrogramas para el conjunto de datos utilizando diferentes métodos de distancias.
+        Aplica Balanced KMeans al DataFrame y añade las etiquetas de clusters al DataFrame original.
 
         Params:
-            - lista_metodos : list of str, optional, default: ["average", "complete", "ward"]. Lista de métodos para calcular las distancias entre los clusters. Cada método generará un dendrograma
-                en un subplot diferente.
+            - dataframe_original : pd.DataFrame. El DataFrame original al que se le añadirán las etiquetas de clusters.
+            - num_clusters : int. Número de clusters a formar.
+            - size_min : int. Tamaño mínimo permitido por cluster.
 
         Returns:
-            None
+            - pd.DataFrame. El DataFrame original con una nueva columna para las etiquetas de clusters.
+            - labels : np.array. Etiquetas de los clusters.
         """
-        _, axes = plt.subplots(nrows=1, ncols=len(lista_metodos), figsize=(20, 8))
-        axes = axes.flat
+        # Crear modelo Balanced KMeans con solo tamaño mínimo
+        kmeans = KMeansConstrained(
+            n_clusters=num_clusters,
+            size_min=size_min,
+            size_max=len(dataframe_original),  # Sin límite superior
+            random_state=42
+        )
+        # Ajustar el modelo a los datos
+        km_fit = kmeans.fit(self.dataframe)
+        labels = km_fit.labels_
 
-        for indice, metodo in enumerate(lista_metodos):
-            sch.dendrogram(sch.linkage(self.dataframe, method=metodo),
-                           labels=self.dataframe.index, 
-                           leaf_rotation=90, leaf_font_size=4,
-                           ax=axes[indice])
-            axes[indice].set_title(f'Dendrograma usando {metodo}')
-            axes[indice].set_xlabel('Muestras')
-            axes[indice].set_ylabel('Distancias')
+        # Añadir etiquetas al DataFrame original
+        dataframe_original["clusters_balanced_kmeans_min"] = labels.astype(str)
+        return dataframe_original, labels
     
     def modelo_aglomerativo(self, num_clusters, metodo_distancias, dataframe_original):
         """
@@ -428,7 +281,7 @@ class Clustering:
         # Añadir las etiquetas de clusters al DataFrame original
         dataframe_original["clusters_divisive"] = final_labels.astype(int).astype(str)
 
-        return dataframe_original
+        return dataframe_original,final_labels
 
     def modelo_espectral(self, dataframe_original, n_clusters=3, assign_labels='kmeans'):
         """
@@ -445,54 +298,72 @@ class Clustering:
         spectral = SpectralClustering(n_clusters=n_clusters, assign_labels=assign_labels, random_state=0)
         labels = spectral.fit_predict(self.dataframe)
         dataframe_original["clusters_spectral"] = labels.astype(str)
-        return dataframe_original
+        return dataframe_original,labels
     
     def modelo_dbscan(self, dataframe_original, eps_values=[0.5, 1.0, 1.5], min_samples_values=[3, 2, 1]):
         """
         Aplica DBSCAN al DataFrame y añade las etiquetas de clusters al DataFrame original.
+        Optimiza parámetros según la métrica de silueta, ignorando ruido.
 
         Params:
-            - dataframe_original : pd.DataFrame. El DataFrame original al que se le añadirán las etiquetas de clusters.
-            - eps_values : list of float, optional, default: [0.5, 1.0, 1.5]. Lista de valores para el parámetro eps de DBSCAN.
-            - min_samples_values : list of int, optional, default: [3, 2, 1]. Lista de valores para el parámetro min_samples de DBSCAN.
+            - dataframe_original (pd.DataFrame): DataFrame original al que se añadirán las etiquetas de clusters.
+            - eps_values (list of float, optional): Lista de valores para el parámetro eps.
+            - min_samples_values (list of int, optional): Lista de valores para el parámetro min_samples.
 
         Returns:
-            - pd.DataFrame. El DataFrame original con una nueva columna para las etiquetas de clusters.
+            - pd.DataFrame: DataFrame original con una nueva columna "clusters_dbscan".
+            - dict: Diccionario con los mejores parámetros y métricas.
         """
+        # Escalar los datos
+        scaler = StandardScaler()
+        data_scaled = scaler.fit_transform(self.dataframe)
+
+        # Variables para guardar el mejor resultado
         best_eps = None
         best_min_samples = None
-        best_silhouette = -1  # Usamos -1 porque la métrica de silueta varía entre -1 y 1
+        best_silhouette = -1  # Inicializar en -1 ya que el rango es [-1, 1]
 
-        # Iterar sobre diferentes combinaciones de eps y min_samples
+        # Iterar sobre combinaciones de eps y min_samples
         for eps in eps_values:
             for min_samples in min_samples_values:
                 # Aplicar DBSCAN
                 dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-                labels = dbscan.fit_predict(self.dataframe)
+                labels = dbscan.fit_predict(data_scaled)
 
-                # Calcular la métrica de silueta, ignorando etiquetas -1 (ruido)
-                if len(set(labels)) > 1 and len(set(labels)) < len(labels):
-                    silhouette = silhouette_score(self.dataframe, labels)
+                # Ignorar casos con un solo cluster o solo ruido
+                unique_labels = set(labels)
+                if len(unique_labels) <= 1 or (len(unique_labels) == 2 and -1 in unique_labels):
+                    continue
+
+                # Calcular métrica de silueta, excluyendo el ruido (-1)
+                mask = labels != -1
+                if mask.sum() > 1:  # Al menos dos puntos deben ser considerados
+                    silhouette = silhouette_score(data_scaled[mask], labels[mask])
                 else:
                     silhouette = -1
 
-                # Mostrar resultados (opcional)
-                print(f"eps: {eps}, min_samples: {min_samples}, silhouette: {silhouette}")
-
-                # Actualizar el mejor resultado si la métrica de silueta es mejor
+                # Actualizar el mejor resultado si es necesario
                 if silhouette > best_silhouette:
                     best_silhouette = silhouette
                     best_eps = eps
                     best_min_samples = min_samples
 
-        # Aplicar DBSCAN con los mejores parámetros encontrados
+        # Aplicar DBSCAN con los mejores parámetros
         best_dbscan = DBSCAN(eps=best_eps, min_samples=best_min_samples)
-        best_labels = best_dbscan.fit_predict(self.dataframe)
+        best_labels = best_dbscan.fit_predict(data_scaled)
 
-        # Añadir los labels al DataFrame original
+        # Añadir las etiquetas al DataFrame original
         dataframe_original["clusters_dbscan"] = best_labels
 
-        return dataframe_original
+        # Diccionario con los mejores resultados
+        resultados = {
+            "best_eps": best_eps,
+            "best_min_samples": best_min_samples,
+            "best_silhouette": best_silhouette,
+            "unique_clusters": len(set(best_labels)) - (1 if -1 in best_labels else 0),  # Excluir ruido
+        }
+
+        return dataframe_original, resultados,best_labels
 
     def calcular_metricas(self, labels: np.ndarray):
         """
@@ -512,3 +383,149 @@ class Clustering:
             "davies_bouldin_index": davies_bouldin,
             "cardinalidad": cardinalidad
         }, index = [0])
+
+def graficar_clusters(dataframe, cluster_col='Cluster', figsize=(18, 6), palette="tab10"):
+    """
+    Genera gráficos de barras para variables categóricas (conteos) y numéricas (promedios) por cluster,
+    con las variables ordenadas de mayor a menor.
+
+    Parameters:
+        - dataframe (pd.DataFrame): Conjunto de datos que incluye las etiquetas de clusters.
+        - cluster_col (str): Nombre de la columna que contiene las etiquetas de clusters.
+        - figsize (tuple): Tamaño base de cada gráfica.
+        - palette (str): Paleta de colores para las barras (compatible con seaborn).
+
+    Returns:
+        - None
+    """
+    # Asegurarse de que la columna de clusters existe
+    if cluster_col not in dataframe.columns:
+        raise ValueError(f"La columna '{cluster_col}' no se encuentra en el DataFrame.")
+
+    # Filtrar variables categóricas y numéricas
+    categorical_cols = dataframe.select_dtypes(include=['object', 'category']).columns
+    numeric_cols = dataframe.select_dtypes(include=['number']).columns
+
+    # Configurar colores
+    colors = sns.color_palette(palette, len(dataframe[cluster_col].unique()))
+
+    # Gráficos de variables categóricas
+    if len(categorical_cols) > 0:
+        n_cols = 3
+        n_rows = math.ceil(len(categorical_cols) / n_cols)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize[0], figsize[1] * n_rows))
+        axes = axes.flatten()
+
+        for idx, variable in enumerate(categorical_cols):
+            # Calcular distribución de conteos por cluster
+            distribucion = (
+                dataframe.groupby([cluster_col, variable])
+                .size()
+                .unstack(level=0, fill_value=0)
+            )
+            # Ordenar las categorías de mayor a menor para cada cluster
+            distribucion = distribucion.sort_values(by=distribucion.columns.tolist(), ascending=False)
+
+            # Generar gráfico
+            distribucion.plot(kind='bar', ax=axes[idx], color=colors, width=0.8)
+            axes[idx].set_title(f'Conteos de {variable} por Cluster')
+            axes[idx].set_xlabel(variable)
+            axes[idx].set_ylabel('Conteo')
+            axes[idx].legend(title='Cluster', loc='upper right')
+
+        for idx in range(len(categorical_cols), len(axes)):
+            axes[idx].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
+    # Gráficos de variables numéricas
+    if len(numeric_cols) > 0:
+        n_cols = 3
+        n_rows = math.ceil(len(numeric_cols) / n_cols)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize[0], figsize[1] * n_rows))
+        axes = axes.flatten()
+
+        for idx, variable in enumerate(numeric_cols):
+            # Calcular los promedios por cluster
+            promedios = dataframe.groupby(cluster_col)[variable].mean()
+
+            # Ordenar los promedios de mayor a menor
+            promedios = promedios.sort_values(ascending=False)
+
+            # Generar gráfico
+            promedios.plot(kind='bar', ax=axes[idx], color=colors, width=0.8)
+            axes[idx].set_title(f'Promedio de {variable} por Cluster')
+            axes[idx].set_xlabel('Cluster')
+            axes[idx].set_ylabel('Promedio')
+            axes[idx].grid(axis='y', linestyle='--', alpha=0.7)
+
+        for idx in range(len(numeric_cols), len(axes)):
+            axes[idx].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+def calcular_metricas(dataframe, cluster_col):
+    """
+    Calcula métricas de evaluación del clustering utilizando un DataFrame con una columna de clusters.
+
+    Parameters:
+        - dataframe (pd.DataFrame): DataFrame con variables numéricas y una columna de clusters.
+        - cluster_col (str): Nombre de la columna que contiene las etiquetas de clusters.
+
+    Returns:
+        - pd.DataFrame: DataFrame con las métricas calculadas.
+    """
+    # Verificar que la columna de clusters existe
+    if cluster_col not in dataframe.columns:
+        raise ValueError(f"La columna '{cluster_col}' no se encuentra en el DataFrame.")
+
+    # Separar las etiquetas de clusters y las características
+    labels = dataframe[cluster_col]
+    features = dataframe.drop(columns=[cluster_col])
+
+    if len(set(labels)) <= 1:
+        raise ValueError("El clustering debe tener al menos 2 clusters para calcular las métricas.")
+
+    # Calcular métricas
+    silhouette = silhouette_score(features, labels)
+    davies_bouldin = davies_bouldin_score(features, labels)
+
+    # Calcular cardinalidad de los clusters
+    unique, counts = np.unique(labels, return_counts=True)
+    cardinalidad = dict(zip(unique, counts))
+
+    # Crear DataFrame de resultados
+    resultados = pd.DataFrame({
+        "silhouette_score": [silhouette],
+        "davies_bouldin_index": [davies_bouldin],
+        "cardinalidad": [cardinalidad]
+    })
+
+    return resultados
+
+def dividir_y_guardar_clusters(dataframe, cluster_col, output_prefix="cluster"):
+    """
+    Divide un DataFrame en varios archivos PKL según los valores de la columna de clusters.
+
+    Params:
+        - dataframe (pd.DataFrame): El DataFrame que contiene los datos.
+        - cluster_col (str): Nombre de la columna que contiene los clusters.
+        - output_prefix (str): Prefijo para los nombres de los archivos PKL (por defecto: "cluster").
+
+    Returns:
+        - None. Los archivos PKL se guardan en el directorio actual.
+    """
+    # Verificar que la columna existe
+    if cluster_col not in dataframe.columns:
+        raise ValueError(f"La columna '{cluster_col}' no existe en el DataFrame.")
+    
+    # Obtener los valores únicos de clusters
+    clusters = dataframe[cluster_col].unique()
+
+    # Dividir y guardar cada cluster
+    for cluster in clusters:
+        df_cluster = dataframe[dataframe[cluster_col] == cluster]
+        output_filename = f"../results/{output_prefix}_{cluster}.pkl"
+        df_cluster.to_pickle(output_filename)
+        print(f"Archivo guardado: {output_filename}")

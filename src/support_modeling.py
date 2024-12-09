@@ -1,277 +1,466 @@
+
 # Tratamiento de datos
 # -----------------------------------------------------------------------
 import pandas as pd
 import numpy as np
+np.set_printoptions(formatter={'float_kind': lambda x: f"{float(x):.4f}"})
 
 # Visualizaciones
 # -----------------------------------------------------------------------
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn import tree
-import shap
 
-# Para realizar la clasificación y la evaluación del modelo
+# Para realizar la regresión lineal y la evaluación del modelo
 # -----------------------------------------------------------------------
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import train_test_split, learning_curve, GridSearchCV, cross_val_score, StratifiedKFold, KFold
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    cohen_kappa_score,
-    confusion_matrix
-)
-import xgboost as xgb
-import pickle
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor, plot_tree
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split,GridSearchCV
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.model_selection import KFold,LeaveOneOut, cross_val_score
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
 
-# Para realizar cross validation
-# -----------------------------------------------------------------------
-from sklearn.metrics import roc_curve, roc_auc_score
+def metricas(y_train, y_train_pred, y_test, y_test_pred):
+    # Convertir DataFrames a Series si es necesario
+    if isinstance(y_train, pd.DataFrame):
+        y_train = y_train.squeeze()
+    if isinstance(y_test, pd.DataFrame):
+        y_test = y_test.squeeze()
 
+    # Convertir a NumPy arrays
+    y_train = y_train.values if hasattr(y_train, 'values') else y_train
+    y_test = y_test.values if hasattr(y_test, 'values') else y_test
 
-class AnalisisModelosClasificacion:
-    def __init__(self, dataframe, variable_dependiente):
-        self.dataframe = dataframe
-        self.variable_dependiente = variable_dependiente
-        self.X = dataframe.drop(variable_dependiente, axis=1)
-        self.y = dataframe[variable_dependiente]
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            self.X, self.y, train_size=0.8, random_state=42, shuffle=True)
+    # Verificar que contienen valores numéricos
+    if not np.issubdtype(y_train.dtype, np.number) or not np.issubdtype(y_test.dtype, np.number):
+        raise ValueError("y_train o y_test contienen valores no numéricos.")
 
-        # Diccionario de modelos y resultados
-        self.modelos = {
-            "logistic_regression": LogisticRegression(),
-            "tree": DecisionTreeClassifier(),
-            "random_forest": RandomForestClassifier(),
-            "gradient_boosting": GradientBoostingClassifier(),
-            "xgboost": xgb.XGBClassifier()
-        }
-        self.resultados = {nombre: {"mejor_modelo": None, "pred_train": None, "pred_test": None} for nombre in self.modelos}
-
-    def ajustar_modelo(self, modelo_nombre, param_grid=None, cross_validation = 5):
-        """
-        Ajusta el modelo seleccionado con GridSearchCV.
-        """
-        if modelo_nombre not in self.modelos:
-            raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
-        
-        modelo = self.modelos[modelo_nombre]
-
-        # Parámetros predeterminados por modelo
-        parametros_default = {
-            "logistic_regression": {
-                'penalty': ['l1', 'l2', 'elasticnet'],
-                'C': [0.01, 0.1, 1, 10, 100],  # Regularización
-                'solver': ['liblinear', 'saga'],  # Para 'l1' y 'l2'
-                'l1_ratio': [0.1, 0.5, 0.9],  # Necesario solo para 'elasticnet'
-                'max_iter': [100, 200, 500]  # Iteraciones
-            },
-            "tree": {
-                'max_depth': [3, 5, 7, 10],
-                'min_samples_split': [2, 5, 10],
-                'min_samples_leaf': [1, 2, 4]
-            },
-            "random_forest": {
-                'n_estimators': [50, 100, 200],
-                'max_depth': [None, 10, 20, 30],
-                'min_samples_split': [2, 5, 10],
-                'min_samples_leaf': [1, 2, 4],
-                'max_features': ['auto', 'sqrt', 'log2']
-            },
-            "gradient_boosting": {
-                'n_estimators': [100, 200],
-                'learning_rate': [0.01, 0.1, 0.2],
-                'max_depth': [3, 4, 5],
-                'min_samples_split': [2, 5, 10],
-                'min_samples_leaf': [1, 2, 4],
-                'subsample': [0.8, 1.0]
-            },
-            "xgboost": {
-                'n_estimators': [100, 200],
-                'learning_rate': [0.01, 0.1, 0.2],
-                'max_depth': [3, 4, 5],
-                'min_child_weight': [1, 3, 5],
-                'subsample': [0.8, 1.0],
-                'colsample_bytree': [0.8, 1.0]
-            }
-        }
-
-        if param_grid is None:
-            param_grid = parametros_default.get(modelo_nombre, {})
-
-        # Ajuste del modelo
-        grid_search = GridSearchCV(estimator=modelo, 
-                                   param_grid=param_grid, 
-                                   cv=cross_validation, 
-                                   scoring='accuracy',
-                                   n_jobs=-1)
-        
-        grid_search.fit(self.X_train, self.y_train)
-        self.resultados[modelo_nombre]["mejor_modelo"] = grid_search.best_estimator_
-        self.resultados[modelo_nombre]["pred_train"] = grid_search.best_estimator_.predict(self.X_train)
-        self.resultados[modelo_nombre]["pred_test"] = grid_search.best_estimator_.predict(self.X_test)
-
-        # Guardar el modelo
-        with open(f'../models/mejor_modelo_{modelo_nombre}.pkl', 'wb') as f:
-            pickle.dump(grid_search.best_estimator_, f)
-
-    def calcular_metricas(self, modelo_nombre):
-        """
-        Calcula métricas de rendimiento para el modelo seleccionado, incluyendo AUC y Kappa.
-        """
-        if modelo_nombre not in self.resultados:
-            raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
-        
-        pred_train = self.resultados[modelo_nombre]["pred_train"]
-        pred_test = self.resultados[modelo_nombre]["pred_test"]
-
-        if pred_train is None or pred_test is None:
-            raise ValueError(f"Debe ajustar el modelo '{modelo_nombre}' antes de calcular métricas.")
-        
-        # Calcular probabilidades para AUC (si el modelo las soporta)
-        modelo = self.resultados[modelo_nombre]["mejor_modelo"]
-        if hasattr(modelo, "predict_proba"):
-            prob_train = modelo.predict_proba(self.X_train)[:, 1]
-            prob_test = modelo.predict_proba(self.X_test)[:, 1]
-        else:
-            prob_train = prob_test = None  # Si no hay probabilidades, AUC no será calculado
-
-        # Métricas para conjunto de entrenamiento
-        metricas_train = {
-            "accuracy": accuracy_score(self.y_train, pred_train),
-            "precision": precision_score(self.y_train, pred_train, average='weighted', zero_division=0),
-            "recall": recall_score(self.y_train, pred_train, average='weighted', zero_division=0),
-            "f1": f1_score(self.y_train, pred_train, average='weighted', zero_division=0),
-            "kappa": cohen_kappa_score(self.y_train, pred_train),
-            "auc": roc_auc_score(self.y_train, prob_train) if prob_train is not None else None
-        }
-
-        # Métricas para conjunto de prueba
-        metricas_test = {
-            "accuracy": accuracy_score(self.y_test, pred_test),
-            "precision": precision_score(self.y_test, pred_test, average='weighted', zero_division=0),
-            "recall": recall_score(self.y_test, pred_test, average='weighted', zero_division=0),
-            "f1": f1_score(self.y_test, pred_test, average='weighted', zero_division=0),
-            "kappa": cohen_kappa_score(self.y_test, pred_test),
-            "auc": roc_auc_score(self.y_test, prob_test) if prob_test is not None else None
-        }
-
-        # Combinar métricas en un DataFrame
-        return pd.DataFrame({"train": metricas_train, "test": metricas_test})
-
-    def plot_matriz_confusion(self, modelo_nombre):
-        """
-        Plotea la matriz de confusión para el modelo seleccionado.
-        """
-        if modelo_nombre not in self.resultados:
-            raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
-
-        pred_test = self.resultados[modelo_nombre]["pred_test"]
-
-        if pred_test is None:
-            raise ValueError(f"Debe ajustar el modelo '{modelo_nombre}' antes de calcular la matriz de confusión.")
-
-        # Matriz de confusión
-        matriz_conf = confusion_matrix(self.y_test, pred_test)
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(matriz_conf, annot=True, fmt='g', cmap='Blues')
-        plt.title(f"Matriz de Confusión ({modelo_nombre})")
-        plt.xlabel("Predicción")
-        plt.ylabel("Valor Real")
-        plt.show()
+    # Calcular métricas
+    train_metricas = {
+        'r2_score': round(r2_score(y_train, y_train_pred), 4),
+        'MAE': round(mean_absolute_error(y_train, y_train_pred), 4),
+        'MSE': round(mean_squared_error(y_train, y_train_pred), 4),
+        'RMSE': round(np.sqrt(mean_squared_error(y_train, y_train_pred)), 4),
+    }
     
-    def importancia_predictores(self, modelo_nombre):
-        """
-        Calcula y grafica la importancia de las características para el modelo seleccionado.
-        """
-        if modelo_nombre not in self.resultados:
-            raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
-        
-        modelo = self.resultados[modelo_nombre]["mejor_modelo"]
-        if modelo is None:
-            raise ValueError(f"Debe ajustar el modelo '{modelo_nombre}' antes de calcular importancia de características.")
-        
-        # Verificar si el modelo tiene importancia de características
-        if hasattr(modelo, "feature_importances_"):
-            importancia = modelo.feature_importances_
-        elif modelo_nombre == "logistic_regression" and hasattr(modelo, "coef_"):
-            importancia = modelo.coef_[0]
-        else:
-            print(f"El modelo '{modelo_nombre}' no soporta la importancia de características.")
-            return
-        
-        # Crear DataFrame y graficar
-        importancia_df = pd.DataFrame({
-            "Feature": self.X.columns,
-            "Importance": importancia
-        }).sort_values(by="Importance", ascending=False)
+    test_metricas = {
+        'r2_score': round(r2_score(y_test, y_test_pred), 4),
+        'MAE': round(mean_absolute_error(y_test, y_test_pred), 4),
+        'MSE': round(mean_squared_error(y_test, y_test_pred), 4),
+        'RMSE': round(np.sqrt(mean_squared_error(y_test, y_test_pred)), 4),
+    }
+    
+    # Calcular diferencias
+    diferencias = {
+        metric: round(train_metricas[metric] - test_metricas[metric], 4) for metric in train_metricas
+    }
+    
+    # Calcular porcentaje de diferencia relativa al valor mayor promedio
+    porcentaje = {
+        metric: round((diferencias[metric] / (train_metricas[metric] + test_metricas[metric]) / 2) * 100, 4)
+        for metric in train_metricas
+    }
+    
+    # Calcular el rango (entre y_train y y_test)
+    global_min = min(y_train.min(), y_test.min())
+    global_max = max(y_train.max(), y_test.max())
+    rango = round((global_max - global_min), 4)
+    
+    # Ratio sobre el rango
+    ratio_rango = {metric: (((train_metricas[metric] + test_metricas[metric]) / 2) * 100) / rango for metric in train_metricas}
 
-        plt.figure(figsize=(10, 6))
-        sns.barplot(x="Importance", y="Feature", data=importancia_df, palette="viridis")
-        plt.title(f"Importancia de Características ({modelo_nombre})")
-        plt.xlabel("Importancia")
-        plt.ylabel("Características")
-        plt.show()
+    # Calcular porcentaje de influencia basado en la referencia
+    porcentaje_rango = {
+        metric: round((abs(diferencias[metric]) / rango) * 100, 4)
+        for metric in diferencias
+    }
 
-    def hacer_roc_curve(self, modelo_nombre):
-        # Calcular los puntos de la curva ROC
-        fpr, tpr, thresholds = roc_curve(self.y_test, self.resultados[modelo_nombre]["pred_test"])
+       # Calcular el valor minimo de la media y mediana de la variable respuesta (entre y_train y y_test)
+    media_respuesta = round((np.mean(y_train) + np.mean(y_test)) / 2, 4)
+    
+    # Ratio sobre la media
+    ratio_media= {metric:(((train_metricas[metric]+test_metricas[metric])/2)*100)/media_respuesta for metric in train_metricas}
 
-        # Calcular el AUC
-        auc = roc_auc_score(self.y_test, self.resultados[modelo_nombre]["pred_test"])
+    # Calcular porcentaje de influencia basado en la referencia
+    porcentaje_media = {
+        metric: round((abs(diferencias[metric]) / media_respuesta) * 100, 4)
+        for metric in diferencias
+    }
 
-        # Graficar la curva ROC
-        plt.figure(figsize=(8, 6))
-        plt.plot(fpr, tpr, label=f"ROC Curve (AUC = {auc:.2f})")
-        plt.plot([0, 1], [0, 1], 'k--', label="Random Guess")
-        plt.xlabel("False Positive Rate (FPR)")
-        plt.ylabel("True Positive Rate (TPR)")
-        plt.title("ROC Curve")
-        plt.legend(loc="lower right")
-        plt.grid()
-        plt.show()
+    # Combinar resultados
+    metricas = {
+        'Train': train_metricas,
+        'Test': test_metricas,
+        'Diferencia Train-Test': diferencias,
+        'Porcentaje diferencia (%)': porcentaje,
+        'Rango valores': rango,
+        'Ratio Rango (%)': ratio_rango,
+        'Influencia dif rango (%)': porcentaje_rango,
+        'Media':media_respuesta,
+        'Ratio Media(%)':ratio_media,
+        'Influencia dif media (%)': porcentaje_media,    
+    }
+    return pd.DataFrame(metricas).T
 
-    def plot_shap_summary(self, modelo_nombre):
-        """
-        Genera un SHAP summary plot para el modelo seleccionado.
-        Asegura que todas las columnas del dataframe sean utilizadas.
-        """
-        if modelo_nombre not in self.resultados:
-            raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
+def graficar_arbol_decision(modelo, nombres_caracteristicas, tamano_figura=(30, 30), tamano_fuente=12):
+    """
+    Grafica un árbol de decisión con opciones personalizables.
 
-        modelo = self.resultados[modelo_nombre]["mejor_modelo"]
+    Parámetros:
+        modelo: Árbol de decisión entrenado (DecisionTreeClassifier o DecisionTreeRegressor).
+        nombres_caracteristicas: Lista o índice con los nombres de las características (columnas).
+        tamano_figura: Tuple, tamaño de la figura (ancho, alto).
+        tamano_fuente: Tamaño de la fuente en la gráfica.
+    """
+    plt.figure(figsize=tamano_figura)
+    plot_tree(
+        decision_tree=modelo,
+        feature_names=nombres_caracteristicas,
+        filled=True,  # Colorear los nodos
+        rounded=True,  # Esquinas redondeadas
+        fontsize=tamano_fuente,
+        proportion=True,  # Mostrar proporciones en lugar de valores absolutos
+        impurity=False  # Ocultar impureza de los nodos
+    )
+    plt.show()
 
-        if modelo is None:
-            raise ValueError(f"Debe ajustar el modelo '{modelo_nombre}' antes de generar el SHAP plot.")
+def loo_cross_validation_rmse(model, X, y):
+    """
+    Realiza validación cruzada Leave-One-Out (LOO) y calcula el RMSE promedio.
 
-        # Usar TreeExplainer para modelos basados en árboles
-        if modelo_nombre in ["tree", "random_forest", "gradient_boosting", "xgboost"]:
-            explainer = shap.TreeExplainer(modelo)
-            shap_values = explainer.shap_values(self.X_test)
+    Parámetros:
+        model: modelo de regresión (ej. LinearRegression de sklearn)
+        X: DataFrame o matriz con las características (features)
+        y: Serie o vector con el objetivo (target)
+    
+    Retorno:
+        float: RMSE promedio obtenido en la validación cruzada
+    """
+    loo = LeaveOneOut()
+    scores = []
 
-            # Verificar si los SHAP values tienen múltiples clases (dimensión 3)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[1]  # Para modelos binarios
-            elif len(shap_values.shape) == 3:
-                shap_values = shap_values[:, :, 1]  # Clase positiva
-        else:
-            # Usar el explicador genérico para otros modelos
-            explainer = shap.Explainer(modelo, self.X_test, check_additivity=False)
-            shap_values = explainer(self.X_test).values
+    for train_index, test_index in tqdm(loo.split(X), total=len(X)):
+        # Dividir los datos en entrenamiento y prueba
+        X_train_cv, X_test_cv = X.iloc[train_index], X.iloc[test_index]
+        y_train_cv, y_test_cv = y.iloc[train_index], y.iloc[test_index]
 
-        # Incluir todas las columnas del dataframe
-        if hasattr(self, "X"):  # Si tienes un dataframe de referencia
-            full_columns = self.X.columns
-        else:
-            full_columns = self.X_test.columns  # Usa las columnas actuales
+        # Entrenar el modelo y predecir
+        model.fit(X_train_cv, y_train_cv)
+        y_pred = model.predict(X_test_cv)
 
-        # Asegurarte de que todas las columnas estén presentes
-        if len(full_columns) != self.X_test.shape[1]:
-            raise ValueError("El dataframe no contiene todas las columnas originales.")
+        # Calcular RMSE
+        rmse = np.sqrt(mean_squared_error([y_test_cv.values[0]], y_pred))
+        scores.append(rmse)
 
-        # Generar el summary plot para todas las columnas
-        shap.summary_plot(shap_values, self.X_test, feature_names=full_columns)
+    # Calcular y retornar el RMSE promedio
+    return np.mean(scores)
+
+
+def rmse_plot(df, mse_column, columns, figure_size=(16, 10)):
+    """
+    Función sencilla para calcular y graficar el RMSE agrupado por columnas específicas.
+
+    Parámetros:
+    - df: DataFrame que contiene los datos.
+    - mse_column: Columna que contiene los valores de MSE.
+    - columns: Lista de columnas para calcular y graficar el RMSE.
+    - figure_size: Tamaño de la figura (ancho, alto) en tuplas.
+    """
+    num_columns = len(columns)
+    fig, axes = plt.subplots(1, num_columns, figsize=figure_size, sharey=True)
+
+    if num_columns == 1:  # Ajustar para un solo gráfico
+        axes = [axes]
+
+    for ax, column in zip(axes, columns):
+        # Calcular RMSE agrupado
+        rmse = np.sqrt(df.groupby(column)[mse_column].mean().abs())
+
+        # Graficar
+        sns.lineplot(x=rmse.index, y=rmse.values, ax=ax)
+        ax.set_title(f"RMSE por {column}")
+        ax.grid()
+
+    plt.tight_layout()
+    plt.show()
+
+def analizar_correlaciones(df, target_column, threshold=0.05):
+    """
+    Analiza la correlación de las columnas con respecto a la variable objetivo.
+    
+    Parámetros:
+    - df (DataFrame): Dataset que contiene las variables.
+    - target_column (str): Nombre de la columna objetivo para calcular las correlaciones.
+    - threshold (float): Umbral para identificar columnas con baja correlación (por defecto, 0.05).
+    
+    Retorna:
+    - low_correlation_columns (list): Lista de columnas con correlación baja con la columna objetivo.
+    """
+    # Calcular la matriz de correlación
+    correlation_matrix = df.corr()
+    
+    # Correlación con la variable objetivo
+    correlation_with_target = correlation_matrix[target_column].sort_values(ascending=False)
+    
+    # Mostrar las correlaciones
+    print(f"Correlaciones con '{target_column}':")
+    print(correlation_with_target)
+    
+    # Visualizar correlaciones
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=correlation_with_target.index, y=correlation_with_target.values, palette="viridis")
+    plt.xticks(rotation=90, ha='right')
+    plt.title(f'Correlaciones de cada columna con "{target_column}"')
+    plt.ylabel('Correlación')
+    plt.xlabel('Columnas')
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
+    
+    # Identificar columnas con baja correlación
+    low_correlation_columns = correlation_with_target[correlation_with_target.abs() < threshold].index.tolist()
+    print(f"\nColumnas con baja correlación (abs < {threshold}):")
+    print(low_correlation_columns)
+    
+    return low_correlation_columns
+
+def comparativa_graficos(y_test, y_pred_test):
+    """
+    Genera 4 gráficos comparativos entre valores reales y predicciones:
+    1. Dispersión (Scatter Plot)
+    2. Errores residuales
+    3. Línea de valores reales vs predicciones
+    4. KDE para comparar distribuciones de valores reales y predicciones
+    """
+    # Asegurarse de que y_test y y_pred_test sean unidimensionales
+    if isinstance(y_test, (pd.DataFrame, pd.Series)):
+        y_test = y_test.to_numpy().ravel()
+    if isinstance(y_pred_test, (pd.DataFrame, pd.Series)):
+        y_pred_test = y_pred_test.to_numpy().ravel()
+
+    # Figura con subplots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    axes = axes.ravel()
+    
+    # 1. Gráfico de dispersión
+    sns.scatterplot(x=y_test, y=y_pred_test, alpha=0.6, ax=axes[0])
+    axes[0].plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label='Línea de identidad')
+    axes[0].set_title('Dispersión: Predicciones vs Valores Reales')
+    axes[0].set_xlabel('Valores Reales')
+    axes[0].set_ylabel('Predicciones')
+    axes[0].legend()
+    axes[0].grid()
+    
+    # 2. Gráfico de errores residuales
+    residuos = y_test - y_pred_test
+    sns.scatterplot(x=y_pred_test, y=residuos, alpha=0.6, ax=axes[1])
+    axes[1].axhline(0, color='red', linestyle='--')
+    axes[1].set_title('Errores Residuales')
+    axes[1].set_xlabel('Predicciones')
+    axes[1].set_ylabel('Residuos')
+    axes[1].grid()
+    
+    # 3. Gráfico de barras de diferencia absoluta
+    diferencias = abs(y_test - y_pred_test)
+    sns.lineplot(x=range(len(diferencias)), y=diferencias, ax=axes[2], color='purple', alpha=0.7)
+    axes[2].set_title('Diferencia Absoluta Suavizada')
+    axes[2].set_xlabel('Índice')
+    axes[2].set_ylabel('Diferencia Absoluta')
+    axes[2].grid()
+
+    # 4. KDE de distribuciones
+    sns.kdeplot(y_test, color='blue', label='Valores Reales', fill=True, alpha=0.3, ax=axes[3])
+    sns.kdeplot(y_pred_test, color='orange', label='Predicciones', fill=True, alpha=0.3, ax=axes[3])
+    axes[3].set_title('Distribución (KDE) de Valores Reales y Predicciones')
+    axes[3].set_xlabel('Valor')
+    axes[3].set_ylabel('Densidad')
+    axes[3].legend()
+    axes[3].grid()
+    
+    # Ajustar diseño
+    plt.tight_layout()
+    plt.show()
+
+def plot_real_vs_predicted(y_test, y_test_pred, y_train, y_train_pred):
+    """
+    Plots Real vs Predicted Prices for test and train datasets.
+
+    Parameters:
+        y_test (array-like): Actual target values for the test set.
+        y_test_pred (array-like): Predicted target values for the test set.
+        y_train (array-like): Actual target values for the train set.
+        y_train_pred (array-like): Predicted target values for the train set.
+    """
+    plt.figure(figsize=(10, 6), dpi=150)
+    plt.suptitle('Real vs. Predicted Prices')
+
+    # Test data plot
+    plt.subplot(2, 1, 1)
+    sns.scatterplot(x=y_test, y=y_test_pred, alpha=0.6, s=10, label="Test data")
+    plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label="Perfect prediction line", lw=0.7)
+    plt.xlabel('Real Prices (y_test)')
+    plt.ylabel('Predicted Prices (y_test_pred)')
+    plt.legend()
+
+    # Train data plot
+    plt.subplot(2, 1, 2)
+    sns.scatterplot(x=y_train, y=y_train_pred, alpha=0.6, s=10, color="forestgreen", label="Train data")
+    plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label="Perfect prediction line", lw=0.7)
+    plt.xlabel('Real Prices (y_train)')
+    plt.ylabel('Predicted Prices (y_train_pred)')
+    plt.legend()
+
+    # Adjust layout and display
+    plt.tight_layout()
+    plt.show()
+
+def plot_residuals(y_test, y_test_pred, y_train, y_train_pred):
+    """
+    Plots residual plots (absolute and relative) for test and train datasets.
+
+    Parameters:
+        y_test (array-like): Actual target values for the test set.
+        y_test_pred (array-like): Predicted target values for the test set.
+        y_train (array-like): Actual target values for the train set.
+        y_train_pred (array-like): Predicted target values for the train set.
+    """
+    plt.figure(figsize=(10, 6), dpi=150)
+    plt.suptitle('Residual Plot (Absolute and Relative)')
+
+    # Absolute residuals for test data
+    residuals_test = y_test_pred - y_test
+    plt.subplot(2, 2, 1)
+    sns.scatterplot(x=y_test, y=residuals_test, alpha=0.6, s=10, label="Test Data")
+    plt.axhline(0, color='red', linestyle='--', label="Perfect prediction", lw=0.7)
+    plt.xlabel('Real Prices (y_test)')
+    plt.ylabel('Residuals')
+    plt.legend()
+
+    # Absolute residuals for train data
+    residuals_train = y_train_pred - y_train
+    plt.subplot(2, 2, 2)
+    sns.scatterplot(x=y_train, y=residuals_train, alpha=0.6, s=10, color="forestgreen", label="Train Data")
+    plt.axhline(0, color='red', linestyle='--', label="Perfect prediction", lw=0.7)
+    plt.xlabel('Real Prices (y_train)')
+    plt.ylabel('Residuals')
+    plt.legend()
+
+    # Relative residuals (%) for test data
+    relative_residuals_test = (y_test_pred - y_test) / y_test * 100
+    plt.subplot(2, 2, 3)
+    sns.scatterplot(x=y_test, y=relative_residuals_test, alpha=0.6, s=10, label="Test Data")
+    plt.axhline(0, color='red', linestyle='--', label="Perfect prediction", lw=0.7)
+    plt.xlabel('Real Prices (y_test)')
+    plt.ylabel('Residuals (%)')
+    plt.legend()
+
+    # Relative residuals (%) for train data
+    relative_residuals_train = (y_train_pred - y_train) / y_train * 100
+    plt.subplot(2, 2, 4)
+    sns.scatterplot(x=y_train, y=relative_residuals_train, alpha=0.6, s=10, color="forestgreen", label="Train Data")
+    plt.axhline(0, color='red', linestyle='--', label="Perfect prediction", lw=0.7)
+    plt.xlabel('Real Prices (y_train)')
+    plt.ylabel('Residuals (%)')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def analizar_correlaciones(df, target_column, threshold=0.05):
+    """
+    Analiza la correlación de las columnas con respecto a la variable objetivo.
+    
+    Parámetros:
+    - df (DataFrame): Dataset que contiene las variables.
+    - target_column (str): Nombre de la columna objetivo para calcular las correlaciones.
+    - threshold (float): Umbral para identificar columnas con baja correlación (por defecto, 0.05).
+    
+    Retorna:
+    - low_correlation_columns (list): Lista de columnas con correlación baja con la columna objetivo.
+    """
+    # Calcular la matriz de correlación
+    correlation_matrix = df.corr()
+    
+    # Correlación con la variable objetivo
+    correlation_with_target = correlation_matrix[target_column].sort_values(ascending=False)
+    
+    # Mostrar las correlaciones
+    print(f"Correlaciones con '{target_column}':")
+    print(correlation_with_target)
+    
+    # Visualizar correlaciones
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=correlation_with_target.index, y=correlation_with_target.values, palette="viridis")
+    plt.xticks(rotation=90, ha='right')
+    plt.title(f'Correlaciones de cada columna con "{target_column}"')
+    plt.ylabel('Correlación')
+    plt.xlabel('Columnas')
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
+    
+    # Identificar columnas con baja correlación
+    low_correlation_columns = correlation_with_target[correlation_with_target.abs() < threshold].index.tolist()
+    print(f"\nColumnas con baja correlación (abs < {threshold}):")
+    print(low_correlation_columns)
+    
+    return low_correlation_columns
+
+def comparativa_graficos(y_test, y_pred_test):
+    """
+    Genera 4 gráficos comparativos entre valores reales y predicciones:
+    1. Dispersión (Scatter Plot)
+    2. Errores residuales
+    3. Línea de valores reales vs predicciones
+    4. KDE para comparar distribuciones de valores reales y predicciones
+    """
+    # Asegurarse de que y_test y y_pred_test sean unidimensionales
+    if isinstance(y_test, (pd.DataFrame, pd.Series)):
+        y_test = y_test.to_numpy().ravel()
+    if isinstance(y_pred_test, (pd.DataFrame, pd.Series)):
+        y_pred_test = y_pred_test.to_numpy().ravel()
+
+    # Figura con subplots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    axes = axes.ravel()
+    
+    # 1. Gráfico de dispersión
+    sns.scatterplot(x=y_test, y=y_pred_test, alpha=0.6, ax=axes[0])
+    axes[0].plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label='Línea de identidad')
+    axes[0].set_title('Dispersión: Predicciones vs Valores Reales')
+    axes[0].set_xlabel('Valores Reales')
+    axes[0].set_ylabel('Predicciones')
+    axes[0].legend()
+    axes[0].grid()
+    
+    # 2. Gráfico de errores residuales
+    residuos = y_test - y_pred_test
+    sns.scatterplot(x=y_pred_test, y=residuos, alpha=0.6, ax=axes[1])
+    axes[1].axhline(0, color='red', linestyle='--')
+    axes[1].set_title('Errores Residuales')
+    axes[1].set_xlabel('Predicciones')
+    axes[1].set_ylabel('Residuos')
+    axes[1].grid()
+    
+    # 3. Gráfico de barras de diferencia absoluta
+    diferencias = abs(y_test - y_pred_test)
+    sns.lineplot(x=range(len(diferencias)), y=diferencias, ax=axes[2], color='purple', alpha=0.7)
+    axes[2].set_title('Diferencia Absoluta Suavizada')
+    axes[2].set_xlabel('Índice')
+    axes[2].set_ylabel('Diferencia Absoluta')
+    axes[2].grid()
+
+    # 4. KDE de distribuciones
+    sns.kdeplot(y_test, color='blue', label='Valores Reales', fill=True, alpha=0.3, ax=axes[3])
+    sns.kdeplot(y_pred_test, color='orange', label='Predicciones', fill=True, alpha=0.3, ax=axes[3])
+    axes[3].set_title('Distribución (KDE) de Valores Reales y Predicciones')
+    axes[3].set_xlabel('Valor')
+    axes[3].set_ylabel('Densidad')
+    axes[3].legend()
+    axes[3].grid()
+    
+    # Ajustar diseño
+    plt.tight_layout()
+    plt.show()
